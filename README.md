@@ -80,6 +80,7 @@ Main features:
 Primary APIs:
 - TMDb (The Movie Database)
 - TVMaze
+  
 Data includes:
 - Title / content type
 - Popularity
