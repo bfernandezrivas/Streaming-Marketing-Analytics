@@ -32,8 +32,7 @@ ACCENT_4 = "#EF4444"
 ACCENT_5 = "#22C55E"
 
 DEFAULT_DATASET_CANDIDATES = [
-    
-    "DATA/PROCESSED/all_streaming_titles.csv",
+    "DATA/PROCESSED/all_streaming_titles_enriched.csv",
 ]
 
 TOPIC_KEYWORDS = {
@@ -286,6 +285,35 @@ def metric_str(value, decimals=2):
     return f"{value:.{decimals}f}" if pd.notna(value) else "N/A"
 
 
+def parse_people(value):
+    """Return clean person names from an IMDb pipe-separated field."""
+    if pd.isna(value):
+        return []
+
+    return [
+        person.strip()
+        for person in str(value).split("|")
+        if person.strip()
+    ]
+
+
+def unique_people_options(series):
+    """Build sorted type-ahead options from a pipe-separated people column."""
+    people = {
+        person
+        for value in series.fillna("")
+        for person in parse_people(value)
+    }
+    return sorted(people, key=str.casefold)
+
+
+def row_has_person(value, selected_person):
+    """Check exact person membership inside a pipe-separated field."""
+    if not selected_person:
+        return True
+    return selected_person in parse_people(value)
+
+
 def safe_float(x):
     try:
         return float(x)
@@ -468,7 +496,7 @@ def load_data():
     if dataset_path is None:
         raise FileNotFoundError(
             "No dataset found. Please place one of these files in the app folder: "
-            "final_streaming_dataset.csv, streamlit_ready_dataset.csv, all_streaming_titles.csv"
+            "DATA/PROCESSED/all_streaming_titles_enriched.csv"
         )
 
     df = pd.read_csv(dataset_path)
@@ -493,7 +521,8 @@ def load_data():
         "title", "overview", "overview_clean", "genre_names",
         "content_type", "source", "original_language",
         "marketing_segment", "cluster_label", "production_companies",
-        "network", "status", "web_channel", "top_topics"
+        "network", "status", "web_channel", "top_topics",
+        "imdb_cast", "imdb_directors", "imdb_cinematographers"
     ]
     for col in text_cols:
         if col in df.columns:
@@ -758,6 +787,45 @@ sidebar_selected_title = st.sidebar.selectbox(
     placeholder="Start typing..."
 )
 
+st.sidebar.divider()
+st.sidebar.markdown("### Talent filters")
+
+cast_options = (
+    unique_people_options(df["imdb_cast"])
+    if "imdb_cast" in df.columns
+    else []
+)
+selected_cast = st.sidebar.selectbox(
+    "Cast member",
+    options=cast_options,
+    index=None,
+    placeholder="Start typing an actor or actress..."
+)
+
+director_options = (
+    unique_people_options(df["imdb_directors"])
+    if "imdb_directors" in df.columns
+    else []
+)
+selected_director = st.sidebar.selectbox(
+    "Director",
+    options=director_options,
+    index=None,
+    placeholder="Start typing a director..."
+)
+
+cinematographer_options = (
+    unique_people_options(df["imdb_cinematographers"])
+    if "imdb_cinematographers" in df.columns
+    else []
+)
+selected_cinematographer = st.sidebar.selectbox(
+    "Cinematographer",
+    options=cinematographer_options,
+    index=None,
+    placeholder="Start typing a cinematographer..."
+)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # FILTERS
@@ -782,6 +850,27 @@ if selected_topics:
     filtered_df = filtered_df[
         filtered_df["detected_topics_auto"].apply(
             lambda x: any(topic in x for topic in selected_topics)
+        )
+    ]
+
+if selected_cast and "imdb_cast" in filtered_df.columns:
+    filtered_df = filtered_df[
+        filtered_df["imdb_cast"].apply(
+            lambda value: row_has_person(value, selected_cast)
+        )
+    ]
+
+if selected_director and "imdb_directors" in filtered_df.columns:
+    filtered_df = filtered_df[
+        filtered_df["imdb_directors"].apply(
+            lambda value: row_has_person(value, selected_director)
+        )
+    ]
+
+if selected_cinematographer and "imdb_cinematographers" in filtered_df.columns:
+    filtered_df = filtered_df[
+        filtered_df["imdb_cinematographers"].apply(
+            lambda value: row_has_person(value, selected_cinematographer)
         )
     ]
 
@@ -814,6 +903,22 @@ if sidebar_selected_title:
         st.sidebar.metric("Business Value", metric_str(row.get("business_value_score", np.nan)))
         if pd.notna(row.get("predicted_business_value", np.nan)):
             st.sidebar.metric("Predicted BV", metric_str(row.get("predicted_business_value", np.nan)))
+
+        st.sidebar.markdown("#### IMDb credits")
+        cast_text = row.get("imdb_cast", "")
+        director_text = row.get("imdb_directors", "")
+        cinematographer_text = row.get("imdb_cinematographers", "")
+
+        st.sidebar.caption(
+            f"**Cast:** {cast_text if str(cast_text).strip() else 'N/A'}"
+        )
+        st.sidebar.caption(
+            f"**Director(s):** {director_text if str(director_text).strip() else 'N/A'}"
+        )
+        st.sidebar.caption(
+            f"**Cinematographer(s):** "
+            f"{cinematographer_text if str(cinematographer_text).strip() else 'N/A'}"
+        )
 
         active_topics = get_active_topics_from_row(row)
         if not active_topics:
@@ -1076,7 +1181,10 @@ with tab4:
                     f"**Genres:** {row.get('genre_names', 'N/A')}  \n"
                     f"**Language:** {row.get('original_language', 'N/A')}  \n"
                     f"**Marketing Segment:** {row.get('marketing_segment', 'N/A')}  \n"
-                    f"**Cluster:** {row.get('cluster_label', 'N/A') if str(row.get('cluster_label', '')).strip() else 'N/A'}"
+                    f"**Cluster:** {row.get('cluster_label', 'N/A') if str(row.get('cluster_label', '')).strip() else 'N/A'}  \n"
+                    f"**Cast:** {row.get('imdb_cast', 'N/A') if str(row.get('imdb_cast', '')).strip() else 'N/A'}  \n"
+                    f"**Director(s):** {row.get('imdb_directors', 'N/A') if str(row.get('imdb_directors', '')).strip() else 'N/A'}  \n"
+                    f"**Cinematographer(s):** {row.get('imdb_cinematographers', 'N/A') if str(row.get('imdb_cinematographers', '')).strip() else 'N/A'}"
                 )
 
                 active_topics = get_active_topics_from_row(row)
@@ -1279,7 +1387,9 @@ with tab6:
         "original_language", "source", "popularity", "vote_average",
         "vote_count", "visibility_score", "engagement_score",
         "audience_reception_score", "business_value_score", "predicted_business_value",
-        "marketing_segment", "cluster_label", "detected_topics_text", "overview"
+        "marketing_segment", "cluster_label",
+        "imdb_cast", "imdb_directors", "imdb_cinematographers",
+        "detected_topics_text", "overview"
     ] if c in filtered_df.columns]
 
     st.dataframe(filtered_df[explorer_cols].head(200), use_container_width=True)
